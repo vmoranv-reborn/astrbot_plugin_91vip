@@ -4,9 +4,7 @@ import uuid
 import time
 import argparse
 import csv
-import re
 import random
-import asyncio
 import shutil
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
@@ -16,7 +14,7 @@ from threading import Lock
 from urllib.parse import urlparse
 
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star, register, StarTools
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.api import logger
 from astrbot.api import AstrBotConfig
 
@@ -265,106 +263,7 @@ def crawl_91porn(args: argparse.Namespace) -> None:
         failed_pages,
     )
 
-# 视频下载相关函数
-def get_one_page_urls(r):
-    one_page_video_urls = []
-    soup = BeautifulSoup(r.text, 'html.parser')
-    elements = soup.select(".has-text-grey-dark")
-    for e in elements[0::2]:
-        one_page_video_urls.append(e["href"])
-    return one_page_video_urls
 
-def get_video_ids(r):
-    ids = []
-    soup = BeautifulSoup(r.text, 'html.parser')
-    for i in soup.find_all(name='img', attrs={'loading': 'lazy'}):
-        ids.append(re.search(r'/(\d+)\.webp$', i.get('src')).group()[1:-5])
-    return ids
-
-def get_video_info(r):
-    soup = BeautifulSoup(r.text, 'html.parser')
-    m3u8_pattern = r'm3u8\?t=([^&]+)&m=([A-Za-z0-9_\-]+)'
-    favorites_pattern = r'"favorites":\d+,'
-    m3u8 = re.search(m3u8_pattern, r.text).group()
-    favorites = re.search(favorites_pattern, r.text).group()
-    title = soup.find(name='meta', attrs={'property': 'twitter:title'}).get('content')
-    uploader = soup.find(name='meta', attrs={'property': 'twitter:creator'}).get('content')
-    date_pattern = "(([0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]{1}|[0-9]{1}[1-9][0-9]{2}|[1-9][0-9]{3})-(((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01]))|" + "((0[469]|11)-(0[1-9]|[12][0-9]|30))|(02-(0[1-9]|[1][0-9]|2[0-8]))))|((([0-9]{2})(0[48]|[2468][048]|[13579][26])|" + "((0[48]|[2468][048]|[3579][26])00))-02-29)$"
-    upload_date = re.search(date_pattern, soup.select(".content.is-size-7")[0].text).group()
-    return m3u8, title, favorites, uploader, upload_date
-
-def del_trash(r, one_page_video_urls, ids):
-    del_urls = []
-    del_ids = []
-    soup = BeautifulSoup(r.text, 'html.parser')
-    video_duration = soup.select(".duration")
-    for i in range(len(video_duration)):
-        if int(video_duration[i].text[3:5]) >= 20:
-            del_urls.append(one_page_video_urls[i])
-            del_ids.append(ids[i])
-    pure_urls = list(filter(lambda x: x not in del_urls, one_page_video_urls))
-    pure_ids = list(filter(lambda x: x not in del_ids, ids))
-    return pure_urls, pure_ids
-
-def download_videos_func(pages: str, max_duration: int, downloads_dir: str):
-    """视频下载函数"""
-    base_url = 'https://zvm.xinhua107.com/'
-    favorite_url = base_url+'video/category/most-favorite/'
-    # cdns = ["cdn2.jiuse3.cloud","fdc100g2b.jiuse.cloud","dp.jiuse.cloud","shark10g2.jiuse.cloud"]  # 暂时注释掉未使用的变量
-    
-    # 解析页面范围
-    if "-" in pages:
-        start_page, end_page = map(int, pages.split("-"))
-        page_range = range(start_page, end_page + 1)
-    else:
-        page_range = range(int(pages), int(pages) + 1)
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    
-    downloaded_files = []
-    
-    for page in page_range:
-        r_page = requests.get(favorite_url + str(page), headers=headers)
-
-        #获取当前页面所有视频的链接，用来进入每个视频的页面
-        #返回的url没有base，这里处理一下
-        t_one_page_video_urls = get_one_page_urls(r_page)
-        t2_one_page_video_urls = [base_url+t for t in t_one_page_video_urls]
-        #获取当前页面所有视频的id，用来下载m3u8和ts文件，需要拼接这两个的链接
-        t_ids = get_video_ids(r_page)
-        one_page_video_urls, ids = del_trash(r_page, t2_one_page_video_urls, t_ids)
-
-        #接下来进入每个视频的页面进行下载。这里需要遍历视频主页和视频id所以用for循环
-        for i in range(len(one_page_video_urls)):
-            print(f'processing page {page} video {i}')
-            r_video = requests.get(one_page_video_urls[i], headers=headers)
-
-            #获取视频的信息
-            m3u8, title, favorites, uploader, upload_date = get_video_info(r_video)
-            print(title)
-            # m3u8_url = 'https://'+cdns[0]+'/hls/' + ids[i] + '/index.'+m3u8
-            # r_m3u8 = requests.get(m3u8_url, headers=headers)  # 注释掉未使用的请求
-
-            # 这里简化处理，只记录下载信息而不实际下载
-            # 实际下载需要更复杂的处理，包括ts文件下载和合并
-            title_clean = title.replace('/', '').replace('\\', '')
-            file_name = f'{page}-{i}-{title_clean}.mp4'
-            file_path = os.path.join(downloads_dir, file_name)
-            
-            # 模拟下载完成
-            downloaded_files.append({
-                'title': title,
-                'file_path': file_path,
-                'page': page,
-                'index': i
-            })
-    
-    return downloaded_files
-
-
-@register("91vip", "91VIP", "91porn视频爬虫插件", "1.0.0", "https://github.com/your-repo/astrbot_plugin_91vip")
 class MyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -377,12 +276,10 @@ class MyPlugin(Star):
         # 设置子目录
         self.data_dir = str(data_dir)
         self.outputs_dir = os.path.join(self.data_dir, "outputs")
-        self.downloads_dir = os.path.join(self.data_dir, "downloads")
         self.temp_dir = os.path.join(self.data_dir, "temp")
         
         # 确保目录存在
         os.makedirs(self.outputs_dir, exist_ok=True)
-        os.makedirs(self.downloads_dir, exist_ok=True)
         os.makedirs(self.temp_dir, exist_ok=True)
         
         # 任务管理
@@ -876,7 +773,7 @@ class MyPlugin(Star):
             return []
 
     # 注册指令：爬取91porn视频列表（直接返回内容）
-    @filter.command("91porn", alias={'91', '爬取视频'})
+    @filter.command("91porn")
     async def scrape_91porn(self, event: AstrMessageEvent, category: str = None, count: int = None):
         """爬取91porn视频列表并直接返回结果
         
@@ -944,12 +841,12 @@ class MyPlugin(Star):
                     if processed_thumbnails:
                         # 格式化结果
                         message = f"✅ {user_name}, 获取完成！\n\n"
-                        message += f"📊 统计信息:\n"
+                        message += "📊 统计信息:\n"
                         message += f"   🏷️ 分类: {category}\n"
                         message += f"   📝 视频数: {len(processed_thumbnails)}\n"
                         message += f"   ⏱️ 耗时: {crawl_duration:.1f}秒\n\n"
                         
-                        message += f"📋 视频列表:\n\n"
+                        message += "📋 视频列表:\n\n"
                         
                         # 发送每个视频的信息和图片
                         for i, thumbnail in enumerate(processed_thumbnails, 1):
